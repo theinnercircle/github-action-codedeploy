@@ -1,0 +1,267 @@
+name: 'Deploy via AWS CodeDeploy'
+description: 'Some automation'
+inputs:
+  mode:
+    required: true
+    description: |
+      pr-comment - current PR to comment group
+      issue-comment - default branch to comment group
+      default-push - default branch to input.group
+  group:
+    required: false
+    description: 'Only for default-push, codedeploy group name'
+  sha-filename:
+    required: true
+  region:
+    description: "AWS region"
+    required: true
+  role:
+    required: true
+  application:
+    required: true
+  bucket:
+    required: true
+  files:
+    required: true
+  grafana-url:
+    description: "Grafana base url"
+  loki-expr:
+    description: "Loki expression"
+runs:
+  using: "composite"
+  steps:
+
+    - name: Add reaction - in progress
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        comment-id: ${{ github.event.comment.id }}
+        reaction-type: eyes
+
+    - name: Write python deployment script file
+      uses: DamianReeves/write-file-action@v1.0
+      with:
+        path: deploy.py
+        contents: |
+          import tarfile
+          from time import sleep
+          import boto3
+          import logging
+          import json
+          import urllib.parse
+          import datetime
+          import io
+          import argparse
+          import tempfile
+
+          logging.basicConfig(format='%(levelname)s: %(name)s: %(message)s',
+                              level=logging.INFO)
+
+
+          def get_argument_parser():
+              parser = argparse.ArgumentParser()
+              parser.add_argument(
+                  '--sha', help='git sha', required=True)
+              parser.add_argument(
+                  '--sha-filename', help='filename with git sha', required=True)
+              parser.add_argument(
+                  '--region', help='aws region', required=True)
+              parser.add_argument(
+                  '--application', help='codedeploy application name', required=True)
+              parser.add_argument(
+                  '--group', help='codedeploy deployment group', required=True)
+              parser.add_argument(
+                  '--bucket', help='s3 bucket', required=True)
+              parser.add_argument(
+                  '--files', help='extra files and directories for deployment', nargs='+', required=True)
+              parser.add_argument(
+                  '--grafana-url', help='grafana url', required=True)
+              parser.add_argument(
+                  '--loki-expr', help='loki search expression', required=True)
+              return parser
+
+
+          def build_grafana_url(time_start, grafana_url, loki_expr):
+              left = '["%d","%d","Loki",{"expr":"%s"}]' % (
+                  time_start.timestamp() * 1000,
+                  datetime.datetime.now().timestamp() * 1000,
+                  loki_expr.replace('"', '\\"'))
+              query = {'orgId': 1, 'left': left}
+              url = '%s/explore?%s' % (grafana_url, urllib.parse.urlencode(query))
+              return url
+
+
+          def build_codedeploy_url(region, deployment_id):
+              CODEDEPLOY_URL = 'https://%s.console.aws.amazon.com/codesuite/codedeploy/deployments/%s?region=%s'
+              return CODEDEPLOY_URL % (region, deployment_id, region)
+
+
+          def create_package(sha, sha_filename, files):
+              # mandatory file
+              files.append('appspec.yml')
+
+              package = tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False)
+              with tarfile.open(fileobj=package, mode="w:gz") as tar:
+                  # add file with target git revision hash
+                  file_content = sha.encode('utf8')
+                  info = tarfile.TarInfo(name=sha_filename)
+                  info.size = len(file_content)
+                  tar.addfile(info, io.BytesIO(file_content))
+
+                  # extra custom files
+                  for val in files:
+                      tar.add(val)
+
+              logging.info('Package created: %s', package.name)
+              return package.name
+
+
+          def upload_package(filename, bucket, key):
+              s3_client = boto3.client('s3')
+              s3_client.upload_file(filename, bucket, key)
+              logging.info('Package uploaded: s3://%s/%s', bucket, key)
+
+
+          def trigger_deployment(region, application, group, bucket, key):
+              codedeploy_client = boto3.client('codedeploy')
+              response = codedeploy_client.create_deployment(
+                  applicationName=application,
+                  deploymentGroupName=group,
+                  revision={
+                      'revisionType': 'S3',
+                      's3Location': {
+                          'bucket': bucket,
+                          'key': key,
+                          'bundleType': 'tgz',
+                      },
+                  },
+                  deploymentConfigName='CodeDeployDefault.AllAtOnce',
+                  description=json.dumps({"key": "value"}),
+              )
+              logging.info('Deployment triggered: %s', response)
+              url = build_codedeploy_url(region, response['deploymentId'])
+              logging.info('AWS CodeDeploy console: %s', url)
+              print('::set-output name=codedeploy-url::%s' % url)
+              return response['deploymentId']
+
+
+          def wait_for_completion(deploymentId, time_start, grafana_url, loki_expr):
+              codedeploy_client = boto3.client('codedeploy')
+              while True:
+                  sleep(2)
+
+                  deployment_details = codedeploy_client.get_deployment(
+                      deploymentId=deploymentId)
+                  status = deployment_details["deploymentInfo"]["status"]
+                  logging.info('Deployment status: %s', status)
+
+                  if status == "Created" or status == "InProgress":
+                      continue
+
+                  if status == "Succeeded":
+                      logging.info('Success')
+                      return 0
+
+                  logging.info('Deployment failed')
+                  url = build_grafana_url(time_start, grafana_url, loki_expr)
+                  logging.info('EC2 instances logs: %s', url)
+                  return 1
+
+
+          if __name__ == '__main__':
+              parser = get_argument_parser()
+              args = parser.parse_args()
+
+              package_filename = create_package(args.sha, args.sha_filename, args.files)
+
+              s3_key = args.sha + '.tar.gz'
+              upload_package(package_filename, args.bucket, s3_key)
+
+              time_start = datetime.datetime.now()
+              deploymentId = trigger_deployment(
+                  args.region, args.application, args.group, args.bucket, s3_key)
+
+              exit_code = wait_for_completion(
+                  deploymentId, time_start, args.grafana_url, args.loki_expr)
+              exit(exit_code)
+
+        write-mode: overwrite
+  
+    - name: Extracting pull request head commit
+      uses: actions/github-script@v6
+      id: js
+      env:
+        MODE: ${{ inputs.mode }}      
+        GROUP: ${{ inputs.group }}      
+      with:
+        script: |
+          const { MODE, GROUP } = process.env
+
+          if (MODE == 'pr-comment' || MODE == 'issue-comment') {
+            var match = context.payload.comment.body.match(/\/deploy ([a-z0-9]+)/)
+            if (!match) {
+              core.error('Unknown deployment group');
+            }
+            core.setOutput('group', match[1]);
+          } else {
+            core.setOutput('group', GROUP);
+          }
+
+          if (MODE == 'pr-comment') {
+            const { owner, repo, number } = context.issue;
+            const pr = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: number,
+            });
+            core.setOutput('sha', pr.data.head.sha);
+          } else {
+            core.setOutput('sha', context.sha);
+          }
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-region: ${{ inputs.region }}
+        role-to-assume: ${{ inputs.role }}
+
+    - name: Checkout repo
+      uses: actions/checkout@v2
+      with:
+        ref: ${{ steps.js.outputs.sha }}
+        path: app
+
+    - run: pip3 install boto3==1.22.9
+      shell: bash
+
+    - name: Trigger deployment
+      id: python
+      run: >
+        python3 ../deploy.py 
+        --sha ${{ steps.js.outputs.sha }}
+        --sha-filename "${{ inputs.sha-filename }}"
+        --region ${{ inputs.region }}
+        --application ${{ inputs.application }}
+        --group ${{ steps.js.outputs.group }}
+        --bucket ${{ inputs.bucket }}
+        --files ${{ inputs.files }}
+        --grafana-url ${{ inputs.grafana-url }}
+        --loki-expr '${{ inputs.loki-expr }}'
+      shell: bash
+      working-directory: app
+
+    - name: Add reaction - success
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        comment-id: ${{ github.event.comment.id }}
+        reaction-type: hooray
+        body: |
+          > Deployment successful: ${{ steps.python.outputs.codedeploy-url }}
+
+    - name: Add reaction - failure
+      if: ${{ failure() }}
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        comment-id: ${{ github.event.comment.id }}
+        reaction-type: confused
+        body: |
+          > Deployment failed: https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}
