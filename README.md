@@ -10,4 +10,4 @@
 * [ ] ? tweak github action to avoid calling `pip install` every time
 * [x] make deployment action/script reusable over node/imagick/backend repos
 * [x] provide a way to deploy master branch to test1/2 - can be done via `/deploy test1` from any issue
-* [ ] provide mode details as codedeploy version description: who triggered the build, pull request, commit
+* [x] provide mode details as codedeploy version description: who triggered the build, pull request, commit
