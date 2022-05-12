@@ -34,6 +34,9 @@ outputs:
   group:
     description: "Deployment group"
     value: ${{ steps.js.outputs.group }}
+  actor-name:
+    description: "Full name of the actor user"
+    value: ${{ steps.js.outputs.actor-name }}
   codedeploy-url:
     description: "AWS CodeDeploy console url with deployment"
     value: ${{ steps.python.outputs.codedeploy-url }}
@@ -87,6 +90,8 @@ runs:
                   '--grafana-url', help='grafana url', required=True)
               parser.add_argument(
                   '--loki-expr', help='loki search expression', required=True)
+              parser.add_argument(
+                  '--description', help='deployment description', required=True)
               return parser
 
 
@@ -131,7 +136,7 @@ runs:
               logging.info('Package uploaded: s3://%s/%s', bucket, key)
 
 
-          def trigger_deployment(region, application, group, bucket, key):
+          def trigger_deployment(region, application, group, bucket, key, description):
               codedeploy_client = boto3.client('codedeploy')
               response = codedeploy_client.create_deployment(
                   applicationName=application,
@@ -145,7 +150,7 @@ runs:
                       },
                   },
                   deploymentConfigName='CodeDeployDefault.AllAtOnce',
-                  description=json.dumps({"key": "value"}),
+                  description=description,
               )
               logging.info('Deployment triggered: %s', response)
               url = build_codedeploy_url(region, response['deploymentId'])
@@ -188,7 +193,7 @@ runs:
 
               time_start = datetime.datetime.now()
               deploymentId = trigger_deployment(
-                  args.region, args.application, args.group, args.bucket, s3_key)
+                  args.region, args.application, args.group, args.bucket, s3_key, args.description)
 
               exit_code = wait_for_completion(
                   deploymentId, time_start, args.grafana_url, args.loki_expr)
@@ -228,6 +233,11 @@ runs:
             core.setOutput('sha', context.sha);
           }
 
+          const user = await github.rest.users.getByUsername({
+            username: context.actor,
+          });
+          core.setOutput('actor-name', user.data.name);
+
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
@@ -256,6 +266,7 @@ runs:
         --files ${{ inputs.files }}
         --grafana-url ${{ inputs.grafana-url }}
         --loki-expr '${{ inputs.loki-expr }}'
+        --description 'Triggered by ${{ github.event.actor }} (${{ steps.js.outputs.actor-name }}) via ${{ inputs.mode }} ${{ github.event.html_url }}, ref ${{ steps.js.outputs.sha }}'
       shell: bash
       working-directory: app
 
