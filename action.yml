@@ -266,7 +266,7 @@ runs:
         --files ${{ inputs.files }}
         --grafana-url ${{ inputs.grafana-url }}
         --loki-expr '${{ inputs.loki-expr }}'
-        --description 'Triggered by ${{ github.event.actor }} (${{ steps.js.outputs.actor-name }}) via ${{ inputs.mode }} ${{ github.event.html_url }}, ref ${{ steps.js.outputs.sha }}'
+        --description 'Triggered by ${{ github.actor }} (${{ steps.js.outputs.actor-name }}) via ${{ inputs.mode }} ${{ github.event.comment.html_url }} ref ${{ steps.js.outputs.sha }}'
       shell: bash
       working-directory: app
 
