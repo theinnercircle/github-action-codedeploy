@@ -27,6 +27,16 @@ inputs:
     description: "Grafana base url"
   loki-expr:
     description: "Loki expression"
+outputs:
+  sha:
+    description: "Commit hash deployed"
+    value: ${{ steps.js.outputs.sha }}
+  group:
+    description: "Deployment group"
+    value: ${{ steps.js.outputs.group }}
+  codedeploy-url:
+    description: "AWS CodeDeploy console url with deployment"
+    value: ${{ steps.python.outputs.codedeploy-url }}
 runs:
   using: "composite"
   steps:
