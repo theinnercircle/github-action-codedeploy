@@ -26,7 +26,7 @@ inputs:
     description: "Loki expression"
 outputs:
   deployment-url:
-    description: "AWS CodeDeploy console url with deployment"
+    description: "AWS CodeDeploy console deployment url"
     value: ${{ steps.python.outputs.deployment-url }}
 runs:
   using: "composite"
