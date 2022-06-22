@@ -1,8 +1,6 @@
 name: 'Deploy via AWS CodeDeploy'
 description: 'Some automation'
 inputs:
-  group:
-    required: true
   sha:
     required: true
   sha-filename:
@@ -13,6 +11,8 @@ inputs:
   role:
     required: true
   application:
+    required: true
+  group:
     required: true
   bucket:
     required: true
