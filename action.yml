@@ -1,15 +1,10 @@
 name: 'Deploy via AWS CodeDeploy'
 description: 'Some automation'
 inputs:
-  mode:
-    required: true
-    description: |
-      pr-comment - current PR to comment group
-      issue-comment - default branch to comment group
-      default-push - default branch to input.group
   group:
-    required: false
-    description: 'Only for default-push, codedeploy group name'
+    required: true
+  sha:
+    required: true
   sha-filename:
     required: true
   region:
@@ -23,32 +18,19 @@ inputs:
     required: true
   files:
     required: true
+  description_extra:
+    description: "Aditional comment for deployment description"
   grafana-url:
     description: "Grafana base url"
   loki-expr:
     description: "Loki expression"
 outputs:
-  sha:
-    description: "Commit hash deployed"
-    value: ${{ steps.js.outputs.sha }}
-  group:
-    description: "Deployment group"
-    value: ${{ steps.js.outputs.group }}
-  actor-name:
-    description: "Full name of the actor user"
-    value: ${{ steps.js.outputs.actor-name }}
   codedeploy-url:
     description: "AWS CodeDeploy console url with deployment"
     value: ${{ steps.python.outputs.codedeploy-url }}
 runs:
   using: "composite"
   steps:
-
-    - name: Add reaction - in progress
-      uses: peter-evans/create-or-update-comment@v2
-      with:
-        comment-id: ${{ github.event.comment.id }}
-        reaction-type: eyes
 
     - name: Write python deployment script file
       uses: DamianReeves/write-file-action@v1.0
@@ -200,43 +182,6 @@ runs:
               exit(exit_code)
 
         write-mode: overwrite
-  
-    - name: Extracting pull request head commit
-      uses: actions/github-script@v6
-      id: js
-      env:
-        MODE: ${{ inputs.mode }}      
-        GROUP: ${{ inputs.group }}      
-      with:
-        script: |
-          const { MODE, GROUP } = process.env
-
-          if (MODE == 'pr-comment' || MODE == 'issue-comment') {
-            var match = context.payload.comment.body.match(/\/deploy ([a-z0-9]+)/)
-            if (!match) {
-              core.error('Unknown deployment group');
-            }
-            core.setOutput('group', match[1]);
-          } else {
-            core.setOutput('group', GROUP);
-          }
-
-          if (MODE == 'pr-comment') {
-            const { owner, repo, number } = context.issue;
-            const pr = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: number,
-            });
-            core.setOutput('sha', pr.data.head.sha);
-          } else {
-            core.setOutput('sha', context.sha);
-          }
-
-          const user = await github.rest.users.getByUsername({
-            username: context.actor,
-          });
-          core.setOutput('actor-name', user.data.name);
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
@@ -247,7 +192,7 @@ runs:
     - name: Checkout repo
       uses: actions/checkout@v2
       with:
-        ref: ${{ steps.js.outputs.sha }}
+        ref: ${{ inputs.sha }}
         path: app
 
     - run: pip3 install boto3==1.22.9
@@ -257,32 +202,15 @@ runs:
       id: python
       run: >
         python3 ../deploy.py 
-        --sha ${{ steps.js.outputs.sha }}
+        --sha ${{ inputs.sha }}
         --sha-filename "${{ inputs.sha-filename }}"
         --region ${{ inputs.region }}
         --application ${{ inputs.application }}
-        --group ${{ steps.js.outputs.group }}
+        --group ${{ inputs.group }}
         --bucket ${{ inputs.bucket }}
         --files ${{ inputs.files }}
+        --description 'Triggered by ${{ github.actor }} ref ${{ inputs.sha }} ${{ inputs.description_extra }}'
         --grafana-url ${{ inputs.grafana-url }}
         --loki-expr '${{ inputs.loki-expr }}'
-        --description 'Triggered by ${{ github.actor }} (${{ steps.js.outputs.actor-name }}) via ${{ inputs.mode }} ${{ github.event.comment.html_url }} ref ${{ steps.js.outputs.sha }}'
       shell: bash
       working-directory: app
-
-    - name: Add reaction - success
-      uses: peter-evans/create-or-update-comment@v2
-      with:
-        comment-id: ${{ github.event.comment.id }}
-        reaction-type: hooray
-        body: |
-          > Deployment successful: ${{ steps.python.outputs.codedeploy-url }}
-
-    - name: Add reaction - failure
-      if: ${{ failure() }}
-      uses: peter-evans/create-or-update-comment@v2
-      with:
-        comment-id: ${{ github.event.comment.id }}
-        reaction-type: confused
-        body: |
-          > Deployment failed: https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}
