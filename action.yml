@@ -18,8 +18,8 @@ inputs:
     required: true
   files:
     required: true
-  description_extra:
-    description: "Aditional comment for deployment description"
+  description:
+    description: "Deployment description"
   grafana-url:
     description: "Grafana base url"
   loki-expr:
@@ -209,7 +209,7 @@ runs:
         --group ${{ inputs.group }}
         --bucket ${{ inputs.bucket }}
         --files ${{ inputs.files }}
-        --description 'Triggered by ${{ github.actor }} ref ${{ inputs.sha }} ${{ inputs.description_extra }}'
+        --description '${{ inputs.description }}'
         --grafana-url ${{ inputs.grafana-url }}
         --loki-expr '${{ inputs.loki-expr }}'
       shell: bash
