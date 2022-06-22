@@ -25,9 +25,9 @@ inputs:
   loki-expr:
     description: "Loki expression"
 outputs:
-  codedeploy-url:
+  deployment-url:
     description: "AWS CodeDeploy console url with deployment"
-    value: ${{ steps.python.outputs.codedeploy-url }}
+    value: ${{ steps.python.outputs.deployment-url }}
 runs:
   using: "composite"
   steps:
@@ -137,7 +137,7 @@ runs:
               logging.info('Deployment triggered: %s', response)
               url = build_codedeploy_url(region, response['deploymentId'])
               logging.info('AWS CodeDeploy console: %s', url)
-              print('::set-output name=codedeploy-url::%s' % url)
+              print('::set-output name=deployment-url::%s' % url)
               return response['deploymentId']
 
 
